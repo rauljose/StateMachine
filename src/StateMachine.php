@@ -66,7 +66,6 @@ A ..|> B
 
  */
 
-use function PHPUnit\Framework\throwException;
 
 /**
  * A state machine class, states are represented by:
@@ -243,29 +242,29 @@ class StateMachine {
         }
         // path from $this->currentState to $toState is defined
         if(!array_key_exists($toState, $current[StateMachine::TRANSITION_TO] ?? [])) {
-            $this->lastRejectionReason = "invalidToState: $toState";
+            $this->lastRejectionReason = "invalidToState: $toState currentState $this->currentState";
             return FALSE;
         }
 
         // check if guards exist and allows the move
         foreach($this->moveToGuard as $key => $guard)
-            if(!$guard($this->currentState, $toState, $this->luggage, "moveToGuard")) {
-                $this->lastRejectionReason = "moveToGuard: $key";
+            if(!$guard($this->currentState, $toState, $this->luggage, "moveToGuard", $this)) {
+                $this->lastRejectionReason = "moveToGuard: " . $this->displayCallable($key, $guard);
                 return FALSE;
             }
-        foreach($current[StateMachine::GUARD_LEAVE] ?? [] as $guard)
-            if(!$guard($this->currentState, $toState, $this->luggage, StateMachine::GUARD_LEAVE)) {
-                $this->lastRejectionReason = StateMachine::GUARD_LEAVE . ": $key";
+        foreach($current[StateMachine::GUARD_LEAVE] ?? [] as $key => $guard)
+            if(!$guard($this->currentState, $toState, $this->luggage, StateMachine::GUARD_LEAVE, $this)) {
+                $this->lastRejectionReason = StateMachine::GUARD_LEAVE . ": " . $this->displayCallable($key, $guard);
                 return FALSE;
             }
-        foreach($current[StateMachine::TRANSITION_TO][$toState][StateMachine::GUARD_TRANSITION] ?? [] as $guard)
-            if(!$guard($this->currentState, $toState, $this->luggage, StateMachine::GUARD_TRANSITION)) {
-                $this->lastRejectionReason = StateMachine::TRANSITION_TO . ": $key";
+        foreach($current[StateMachine::TRANSITION_TO][$toState][StateMachine::GUARD_TRANSITION] ?? [] as $key => $guard)
+            if(!$guard($this->currentState, $toState, $this->luggage, StateMachine::GUARD_TRANSITION, $this)) {
+                $this->lastRejectionReason = StateMachine::TRANSITION_TO . ":  " . $this->displayCallable($key, $guard);
                 return FALSE;
             }
-        foreach($this->states[$toState][StateMachine::GUARD_ENTER] ?? [] as $guard)
-            if(!$guard($this->currentState, $toState, $this->luggage, StateMachine::GUARD_ENTER)) {
-                $this->lastRejectionReason = StateMachine::GUARD_ENTER . ": $key";
+        foreach($this->states[$toState][StateMachine::GUARD_ENTER] ?? [] as $key => $guard)
+            if(!$guard($this->currentState, $toState, $this->luggage, StateMachine::GUARD_ENTER, $this)) {
+                $this->lastRejectionReason = StateMachine::GUARD_ENTER . ":  " . $this->displayCallable($key, $guard);
                 return FALSE;
             }
         return TRUE;
@@ -289,22 +288,22 @@ class StateMachine {
         $currentState = $this->currentState;
 
         foreach($this->onBeforeTransition as $on)
-            $on($currentState, $toState, $this->luggage, "ON_BEFORE_TRANSITION");
+            $on($currentState, $toState, $this->luggage, "ON_BEFORE_TRANSITION", $this);
 
         $current = $this->states[$this->currentState];
         foreach($current[StateMachine::ON_LEAVE] ?? [] as $on)
-            $on($this->currentState, $toState, $this->luggage, StateMachine::ON_LEAVE);
+            $on($this->currentState, $toState, $this->luggage, StateMachine::ON_LEAVE, $this);
 
         foreach($current[StateMachine::TRANSITION_TO][$toState][StateMachine::ON_TRANSITION] ?? [] as $on)
-            $on($this->currentState, $toState, $this->luggage, StateMachine::TRANSITION_TO);
+            $on($this->currentState, $toState, $this->luggage, StateMachine::TRANSITION_TO, $this);
 
         $this->currentState = $toState;
 
         foreach($this->states[$toState][StateMachine::ON_ENTER] ?? [] as $on)
-            $on($this->currentState, $toState, $this->luggage, StateMachine::ON_ENTER);
+            $on($this->currentState, $toState, $this->luggage, StateMachine::ON_ENTER, $this);
 
         foreach($this->onAfterTransition as $on)
-            $on($currentState, $toState, $this->luggage, "ON_AFTER_TRANSITION");
+            $on($currentState, $toState, $this->luggage, "ON_AFTER_TRANSITION", $this);
 
     }
 
@@ -374,6 +373,37 @@ class StateMachine {
     public function setLuggage(mixed $luggage): self {
         $this->luggage = $luggage;
         return $this;
+    }
+
+    protected function displayCallable(int|string $key, callable $callable):string {
+        return "($key): " . $this->callableToString($callable);
+    }
+
+    protected function callableToString(callable $callable): string
+    {
+        if ($callable instanceof \Closure) {
+            // Closures don't have names; we can only identify them as such
+            return 'closure';
+        }
+
+        if (is_array($callable)) {
+            // Could be [object, 'method'] or ['Class', 'method']
+            $class = is_object($callable[0]) ? get_class($callable[0]) : $callable[0];
+            return "$class::$callable[1]";
+        }
+
+        if (is_string($callable)) {
+            // Could be 'function_name' or 'Class::method'
+            return $callable;
+        }
+
+        if (is_object($callable) && method_exists($callable, '__invoke')) {
+            // Invokable object
+            return get_class($callable) . '::__invoke';
+        }
+
+        // Fallback (should rarely happen)
+        return 'callable(' . gettype($callable) . ')';
     }
 
 }

@@ -1,231 +1,122 @@
 <?php
-/** @noinspection PhpUnused */
 
 declare(strict_types=1);
 
 namespace ocallit\Util\OcStateMachine;
 
-/**
- * Generates Mermaid class diagrams from StateMachine instances
- */
-class StateMachineGraphMermaid {
-    protected StateMachine $stateMachine;
-    protected string $title;
-    protected string $notes;
+class StateMachineMermaid
+{
+    protected StateMachine $sm;
+    protected array $idMap = [];
+    protected string $idCounter = 'A';
 
-    public function __construct(StateMachine $stateMachine, string $title, string $notes = "") {
-        $this->stateMachine = $stateMachine;
-        $this->title = $title;
-        $this->notes = $notes;
+    public function __construct(StateMachine $sm)
+    {
+        $this->sm = $sm;
     }
 
     /**
-     * Generates a mermaid class diagram string
-     *
-     * @return string The mermaid diagram markup
+     * Generates Mermaid code using HTML labels for better formatting.
+     * * @param bool $nextStepsOnly
+     * @param array $stateNotes External history logs: ['STATE_KEY' => 'Log info...']
      */
-    public function generate(): string {
-        $states = $this->stateMachine->getStates();
-        $currentState = $this->stateMachine->getCurrentState();
+    public function generate(bool $nextStepsOnly = false, array $stateNotes = []): string
+    {
+        $this->idMap = [];
+        $this->idCounter = 'A';
 
-        $mermaid = "";
+        $states = $this->sm->getStates();
+        $current = $this->sm->getCurrentState();
 
-        // Add title using frontmatter if provided
-        if(!empty($this->title)) {
-            $mermaid .= "---\n";
-            $mermaid .= "title: $this->title\n";
-            $mermaid .= "---\n\n";
+        // 1. Determine which states to render
+        $renderStates = $states;
+        $edgesFrom = array_keys($states);
+
+        if ($nextStepsOnly) {
+            $targets = array_keys($states[$current][StateMachine::TRANSITION_TO] ?? []);
+            $renderStates = [$current => $states[$current]];
+            foreach ($targets as $t) {
+                if (isset($states[$t])) $renderStates[$t] = $states[$t];
+            }
+            $edgesFrom = [$current];
         }
 
-        $mermaid .= "classDiagram\n";
+        $out = "stateDiagram-v2\n    direction LR\n";
 
-        // Add subtitle with date/time
-        $datetime = date('Y-m-d H:i:s');
-        $mermaid .= "    note \"Generated: $datetime\"\n\n";
+        // 2. Generate Nodes with HTML Labels
+        foreach ($renderStates as $sid => $cfg) {
+            $short = $this->getId($sid);
 
-        // Add custom notes if provided
-        if(!empty($this->notes)) {
-            $escapedNotes = str_replace('"', '\\"', $this->notes);
-            $mermaid .= "    note \"$escapedNotes\"\n\n";
+            // --- LABEL LOGIC ---
+            // If LABEL is set, use it. Otherwise, use the Array Key (SID).
+            $mainLabel = $cfg[StateMachine::LABEL] ?? $sid;
+
+            // Start building HTML string
+            // We use specific styles for the Header vs Details
+            $html = "<b>$mainLabel</b>";
+
+            // Add Guards (Only show for current/next steps to reduce clutter, or all if preferred)
+            if ((!$nextStepsOnly || $sid === $current) && !empty($cfg[StateMachine::GUARD_ENTER])) {
+                $guards = $this->fmtList($cfg[StateMachine::GUARD_ENTER]);
+                $html .= "<br/>🛡 <i>$guards</i>";
+            }
+
+            // Add External Notes (Logs)
+            if (isset($stateNotes[$sid])) {
+                $note = nl2br(htmlspecialchars($stateNotes[$sid])); // Convert PHP newlines to HTML <br>
+                $html .= "<hr/>📝 <span style='font-size:0.9em'>$note</span>";
+            }
+
+            // Clean up: Remove double quotes from the final HTML string to avoid syntax errors
+            $safeHtml = str_replace('"', "'", $html);
+
+            // Output state with Description
+            $out .= sprintf('    state "%s" as %s' . "\n", $safeHtml, $short);
         }
 
-        // Add icon legend
-        $mermaid .= "    note \"Legend:\\n🛡 Guard functions (return bool, no side effects)\\n⚡ Event handlers (return value ignored, side effects expected)\"\n\n";
+        // 3. Generate Edges
+        foreach ($edgesFrom as $from) {
+            foreach ($states[$from][StateMachine::TRANSITION_TO] ?? [] as $to => $edge) {
+                if (!isset($renderStates[$to])) continue;
 
-        // Generate state relationships (transitions)
-        $mermaid .= $this->generateTransitions($states);
-        $mermaid .= "\n";
+                $fromId = $this->getId($from);
+                $toId = $this->getId($to);
+                $text = "";
 
-        // Generate state class definitions
-        $mermaid .= $this->generateStateClasses($states, $currentState);
+                // Add Transition Guards/Logic to the arrow
+                if (!empty($edge[StateMachine::GUARD_TRANSITION])) {
+                    $guardList = $this->fmtList($edge[StateMachine::GUARD_TRANSITION]);
+                    $text = ": " . str_replace('"', "'", $guardList);
+                } elseif (!empty($edge[StateMachine::LABEL])) {
+                    // If the transition itself has a label (e.g., "Request Changes")
+                    $text = ": " . str_replace('"', "'", $edge[StateMachine::LABEL]);
+                }
 
-        // Generate global callbacks class if any exist
-        $mermaid .= $this->generateGlobalCallbacksClass();
-
-        // Highlight current state
-        $mermaid .= $this->highlightCurrentState($currentState);
-
-        return $mermaid;
-    }
-
-    /**
-     * Generates the transition relationships between states
-     */
-    protected function generateTransitions(array $states): string {
-        $transitions = "";
-
-        foreach($states as $stateId => $stateConfig) {
-            $transitionsTo = $stateConfig[StateMachine::TRANSITION_TO] ?? [];
-
-            foreach($transitionsTo as $toStateId => $transitionConfig) {
-                $transitions .= "    $stateId --> $toStateId\n";
+                $out .= "    $fromId --> $toId $text\n";
             }
         }
 
-        return $transitions;
+        // 4. Highlight Current State
+        $curId = $this->getId($current);
+        // Using a CSS class style for better visuals
+        $out .= "    style $curId fill:#ffdfba,stroke:#ff8c00,stroke-width:2px,color:#000\n";
+
+        return $out;
     }
 
-    /**
-     * Generates class definitions for each state
-     */
-    protected function generateStateClasses(array $states, string $currentState): string {
-        $classes = "";
-
-        foreach($states as $stateId => $stateConfig) {
-            $classes .= $this->generateStateClass($stateId, $stateConfig, $stateId === $currentState);
-        }
-
-        return $classes;
+    protected function getId(string $id): string
+    {
+        return $this->idMap[$id] ??= 'state_' . $this->idCounter++;
     }
 
-    /**
-     * Generates a single state class definition
-     */
-    protected function generateStateClass(string $stateId, array $stateConfig, bool $isCurrent = FALSE): string {
-        $class = "    class $stateId {\n";
-
-        // Add label if exists, with current state indicator
-        $label = $stateConfig[StateMachine::LABEL] ?? $stateId;
-        if($isCurrent) {
-            $label = "🟢 CURRENT: $label";
+    protected function fmtList(array $items): string
+    {
+        $out = [];
+        foreach ($items as $k => $v) {
+            // If the key is a string (e.g., 'guardName' => closure), use the key.
+            // If the value is a string (e.g., 'functionName'), use the value.
+            $out[] = is_string($k) ? $k : (is_string($v) ? $v : 'Function');
         }
-        $class .= "        <<$label>>\n";
-
-        // Add guards and callbacks
-        $class .= $this->generateCallbackSection('🛡 ENTER', $stateConfig[StateMachine::GUARD_ENTER] ?? []);
-        $class .= $this->generateCallbackSection('🛡 LEAVE', $stateConfig[StateMachine::GUARD_LEAVE] ?? []);
-        $class .= $this->generateCallbackSection('⚡ENTER', $stateConfig[StateMachine::ON_ENTER] ?? []);
-        $class .= $this->generateCallbackSection('⚡LEAVE', $stateConfig[StateMachine::ON_LEAVE] ?? []);
-
-        // Add transition-specific callbacks
-        $transitionsTo = $stateConfig[StateMachine::TRANSITION_TO] ?? [];
-        foreach($transitionsTo as $toStateId => $transitionConfig) {
-            $guardTransitions = $transitionConfig[StateMachine::GUARD_TRANSITION] ?? [];
-            $onTransitions = $transitionConfig[StateMachine::ON_TRANSITION] ?? [];
-
-            if(!empty($guardTransitions)) {
-                $class .= $this->generateCallbackSection("🛡 TO_$toStateId", $guardTransitions);
-            }
-
-            if(!empty($onTransitions)) {
-                $class .= $this->generateCallbackSection("⚡ TO_$toStateId", $onTransitions);
-            }
-        }
-
-        $class .= "    }\n\n";
-
-        return $class;
+        return implode(", ", $out);
     }
-
-    /**
-     * Generates a callback section (guards or event handlers)
-     */
-    protected function generateCallbackSection(string $sectionName, array $callbacks): string {
-        if(empty($callbacks)) {
-            return "";
-        }
-
-        $section = "        $sectionName";
-
-        if(count($callbacks) === 1) {
-            $callbackName = $this->getCallbackName(reset($callbacks));
-            $section .= " $callbackName\n";
-        } else {
-            $section .= "\n";
-            foreach($callbacks as $callback) {
-                $callbackName = $this->getCallbackName($callback);
-                $section .= "            $callbackName\n";
-            }
-        }
-
-        return $section;
-    }
-
-    /**
-     * Extracts a readable name from a callable
-     */
-    protected function getCallbackName(callable $callback): string {
-        if(is_string($callback)) {
-            // Function name or 'Class::method'
-            return $callback;
-        }
-
-        if(is_array($callback) && count($callback) === 2) {
-            [$object, $method] = $callback;
-
-            if(is_object($object)) {
-                $className = get_class($object);
-                return "$className::$method";
-            }
-
-            if(is_string($object)) {
-                // Static method call
-                return "$object::$method";
-            }
-        }
-        return "inline func";
-    }
-
-    /**
-     * Generates global callbacks class if any global callbacks exist
-     */
-    protected function generateGlobalCallbacksClass(): string {
-        $hasGlobalCallbacks = FALSE;
-        $class = "    class GlobalCallbacks {\n";
-        $class .= "        <<Always>>\n";
-
-        // Check for global moveToGuard callbacks
-        $moveToGuards = $this->stateMachine->getMoveToGuard();
-        if(!empty($moveToGuards)) {
-            $hasGlobalCallbacks = TRUE;
-            $class .= $this->generateCallbackSection('🛡 MOVE_TO', $moveToGuards);
-        }
-
-        // Check for global onBeforeTransition callbacks
-        $onBeforeTransition = $this->stateMachine->getOnBeforeTransition();
-        if(!empty($onBeforeTransition)) {
-            $hasGlobalCallbacks = TRUE;
-            $class .= $this->generateCallbackSection('⚡BEFORE', $onBeforeTransition);
-        }
-
-        // Check for global onAfterTransition callbacks
-        $onAfterTransition = $this->stateMachine->getOnAfterTransition();
-        if(!empty($onAfterTransition)) {
-            $hasGlobalCallbacks = TRUE;
-            $class .= $this->generateCallbackSection('⚡AFTER', $onAfterTransition);
-        }
-
-        $class .= "    }\n\n";
-
-        return $hasGlobalCallbacks ? $class : "";
-    }
-
-    /**
-     * Highlights the current state with CSS styling
-     */
-    protected function highlightCurrentState(string $currentState): string {
-        return "    class $currentState currentState\n" .
-          "    classDef currentState fill:#90EE90,stroke:#006400,stroke-width:3px,color:#000000\n";
-    }
-
 }
