@@ -191,10 +191,11 @@ class StateMachine {
      */
     public function __construct(array $states, string $currentState, mixed $luggage = NULL, array $moveToGuard = [],
                                 array $onBeforeTransition = [], array $onAfterTransition = []) {
+        if (empty($states)) {
+            throw new \InvalidArgumentException("Empty parameter \$states, State machine requires at least one state.");
+        }
         $this->states = $states;
-        if(empty($currentState))
-            $currentState = array_key_first($states);
-        if(!array_key_exists($currentState, $states))
+        if(empty($currentState) || !array_key_exists($currentState, $states))
             $currentState = array_key_first($states);
         $this->currentState = $currentState;
         $this->luggage = $luggage;
@@ -233,7 +234,7 @@ class StateMachine {
      */
     protected function moveToAllowed(string $toState): bool {
         $this->lastRejectionReason = "";
-        $current = $this->states[$this->currentState] ?? "";
+        $current = $this->states[$this->currentState] ?? [];
 
         // Check target state exists BEFORE running any guards
         if(!array_key_exists($toState, $this->states)) {

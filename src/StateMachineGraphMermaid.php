@@ -4,24 +4,23 @@ declare(strict_types=1);
 
 namespace ocallit\Util\OcStateMachine;
 
-class StateMachineMermaid
-{
+class StateMachineMermaid {
     protected StateMachine $sm;
     protected array $idMap = [];
     protected string $idCounter = 'A';
 
-    public function __construct(StateMachine $sm)
-    {
+    public function __construct(StateMachine $sm) {
         $this->sm = $sm;
     }
 
     /**
      * Generates Mermaid code using HTML labels for better formatting.
-     * * @param bool $nextStepsOnly
+     * *
+     * @param bool $nextStepsOnly
      * @param array $stateNotes External history logs: ['STATE_KEY' => 'Log info...']
+     * @return string
      */
-    public function generate(bool $nextStepsOnly = false, array $stateNotes = []): string
-    {
+    public function generate(bool $nextStepsOnly = FALSE, array $stateNotes = []): string {
         $this->idMap = [];
         $this->idCounter = 'A';
 
@@ -32,11 +31,11 @@ class StateMachineMermaid
         $renderStates = $states;
         $edgesFrom = array_keys($states);
 
-        if ($nextStepsOnly) {
+        if($nextStepsOnly) {
             $targets = array_keys($states[$current][StateMachine::TRANSITION_TO] ?? []);
             $renderStates = [$current => $states[$current]];
-            foreach ($targets as $t) {
-                if (isset($states[$t])) $renderStates[$t] = $states[$t];
+            foreach($targets as $t) {
+                if(isset($states[$t])) $renderStates[$t] = $states[$t];
             }
             $edgesFrom = [$current];
         }
@@ -44,7 +43,7 @@ class StateMachineMermaid
         $out = "stateDiagram-v2\n    direction LR\n";
 
         // 2. Generate Nodes with HTML Labels
-        foreach ($renderStates as $sid => $cfg) {
+        foreach($renderStates as $sid => $cfg) {
             $short = $this->getId($sid);
 
             // --- LABEL LOGIC ---
@@ -56,13 +55,13 @@ class StateMachineMermaid
             $html = "<b>$mainLabel</b>";
 
             // Add Guards (Only show for current/next steps to reduce clutter, or all if preferred)
-            if ((!$nextStepsOnly || $sid === $current) && !empty($cfg[StateMachine::GUARD_ENTER])) {
+            if((!$nextStepsOnly || $sid === $current) && !empty($cfg[StateMachine::GUARD_ENTER])) {
                 $guards = $this->fmtList($cfg[StateMachine::GUARD_ENTER]);
                 $html .= "<br/>🛡 <i>$guards</i>";
             }
 
             // Add External Notes (Logs)
-            if (isset($stateNotes[$sid])) {
+            if(isset($stateNotes[$sid])) {
                 $note = nl2br(htmlspecialchars($stateNotes[$sid])); // Convert PHP newlines to HTML <br>
                 $html .= "<hr/>📝 <span style='font-size:0.9em'>$note</span>";
             }
@@ -75,19 +74,19 @@ class StateMachineMermaid
         }
 
         // 3. Generate Edges
-        foreach ($edgesFrom as $from) {
-            foreach ($states[$from][StateMachine::TRANSITION_TO] ?? [] as $to => $edge) {
-                if (!isset($renderStates[$to])) continue;
+        foreach($edgesFrom as $from) {
+            foreach($states[$from][StateMachine::TRANSITION_TO] ?? [] as $to => $edge) {
+                if(!isset($renderStates[$to])) continue;
 
                 $fromId = $this->getId($from);
                 $toId = $this->getId($to);
                 $text = "";
 
                 // Add Transition Guards/Logic to the arrow
-                if (!empty($edge[StateMachine::GUARD_TRANSITION])) {
+                if(!empty($edge[StateMachine::GUARD_TRANSITION])) {
                     $guardList = $this->fmtList($edge[StateMachine::GUARD_TRANSITION]);
                     $text = ": " . str_replace('"', "'", $guardList);
-                } elseif (!empty($edge[StateMachine::LABEL])) {
+                } elseif(!empty($edge[StateMachine::LABEL])) {
                     // If the transition itself has a label (e.g., "Request Changes")
                     $text = ": " . str_replace('"', "'", $edge[StateMachine::LABEL]);
                 }
@@ -104,15 +103,13 @@ class StateMachineMermaid
         return $out;
     }
 
-    protected function getId(string $id): string
-    {
-        return $this->idMap[$id] ??= 'state_' . $this->idCounter++;
+    protected function getId(string $id): string {
+        return $this->idMap[$id] ??= 's_' . preg_replace('/[^a-zA-Z0-9_]/', '_', $id);
     }
 
-    protected function fmtList(array $items): string
-    {
+    protected function fmtList(array $items): string {
         $out = [];
-        foreach ($items as $k => $v) {
+        foreach($items as $k => $v) {
             // If the key is a string (e.g., 'guardName' => closure), use the key.
             // If the value is a string (e.g., 'functionName'), use the value.
             $out[] = is_string($k) ? $k : (is_string($v) ? $v : 'Function');
